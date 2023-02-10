@@ -179,19 +179,21 @@ genes4radar <- c("CD4", "CD8A", "TCF7", "CCR7", "IL7R", "LMNA", "GZMA", "GZMK", 
 
 plot.states.radar(ref.cd8, query = yost.projected$su009, genes4radar = genes4radar)
 ```
+Expression profile match very well those of the reference map
+
 
 # Clonotype analysis
-
 
 ```{r  fig.width=12, fig.height=8}
 # First, merge data into single object
 yost.merged <- Reduce(merge.Seurat.embeddings, yost.projected)
+Idents(yost.merged) <- "functional.cluster"
 ```
 
 See largest clonotypes
-```{r fig.width=10, fig.height=2}
+```{r fig.width=6, fig.height=4}
 sorted <- sort(table(yost.merged$cdr3s_pat), decreasing = T)
-largest.clones <- head(sorted, 5)
+largest.clones <- head(sorted, 6)
 
 plots <- list()
 for (i in 1:length(largest.clones)) {
@@ -200,10 +202,10 @@ for (i in 1:length(largest.clones)) {
   
   cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
   plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone]) + 
-    ggtitle(sprintf("Clone %i - size %i", i, largest.clones[i]))
+    ggtitle(sprintf("Clone %i - size %i", i, largest.clones[i])) + NoLegend()
 }
 
-wrap_plots(plots, ncol = 5)
+wrap_plots(plots, ncol = 3)
 
 ```
 
@@ -230,14 +232,14 @@ for (i in seq_along(cutoffs)) {
 
 yost.merged$Frequency <- yost.merged$clonesize
 
-table(yost.merged$cloneType, yost.merged$clonesize)
+#table(yost.merged$cloneType, yost.merged$clonesize)
 ```
 
 
+See clonal composition and clonal diversity per cell subtype
 
 ```{r}
 combined <- expression2List(yost.merged, split.by = "functional.cluster")
-Idents(yost.merged) <- "functional.cluster"
 
 clonalDiversity(combined, cloneCall = "cdr3s_pat") +
   scale_color_manual(values = ref.cd8@misc$atlas.palette)
@@ -247,10 +249,40 @@ clonalProportion(combined, cloneCall = "cdr3s_pat", split = c(5, 10, 50, 100, 50
 clonalHomeostasis(combined, cloneCall = "cdr3s_pat",
                   cloneTypes = c(Rare=0.001, Small = 0.005, Medium = 0.01, Large = 0.1, Hyperexpanded= 1))
 
+occupiedscRepertoire(yost.merged, x.axis = "functional.cluster")
+
+compareClonotypes(combined, 
+                  clonotypes = names(largest.clones),
+                  cloneCall="cdr3s_pat", 
+                  graph = "alluvial")
+
+
+```
+
+Metrics of clonal overlap (e.g. Morisita index) can be used to assess clonal sharing between subtypes
+```{r}
 clonalOverlap(combined, cloneCall = "cdr3s_pat", method = "morisita") + 
       theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
 
-occupiedscRepertoire(yost.merged, x.axis = "functional.cluster")
 ```
 
+```{r}
+library(ggraph)
 
+clonalNetwork(yost.merged, 
+              reduction = "umap", 
+              identity = "functional.cluster",
+              filter.clones = 1000,
+              filter.identity = NULL,
+              cloneCall = "cdr3s_pat") +
+  scale_color_manual(values = ref.cd8@misc$atlas.palette)
+
+clonalNetwork(yost.merged, 
+              reduction = "umap", 
+              identity = "functional.cluster",
+              filter.clones = 1000,
+              filter.identity = 'CD8.TEX',
+              cloneCall = "cdr3s_pat") +
+  scale_color_manual(values = ref.cd8@misc$atlas.palette)
+
+```
