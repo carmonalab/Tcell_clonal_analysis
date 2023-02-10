@@ -1,0 +1,256 @@
+---
+title: Reference-based analysis and clonal structure of tumor-specific human T cells
+author: "M. Andreatta <massimo.andreatta at unil.ch> and S. Carmona <santiago.carmona at unil.ch>"
+knit: (function(input_file, encoding) {
+  out_dir <- 'docs';
+  rmarkdown::render(input_file,
+ encoding=encoding,
+ output_file=file.path(dirname(input_file), out_dir, 'index.html'))})
+#output: html_notebook
+---
+
+# Introduction
+
+
+
+# R environment
+
+Install and load all required packages
+```{r, message=FALSE, warning=F, results=FALSE}
+renv::restore()
+
+library(remotes)
+library(BiocManager)
+
+BiocManager::install("scRepertoire")
+remotes::install_github("carmonalab/ProjecTILs")
+
+library(ggplot2)
+library(Seurat)
+library(ProjecTILs)
+library(scRepertoire)
+library(GEOquery)
+library(stringr)
+library(patchwork)
+
+# Increase timeout time for slow connections
+options(timeout = max(900, getOption("timeout")))
+```
+
+
+# Data pre-processing
+
+Download data from GEO
+```{r}
+geo_acc <- "GSE123813"
+datadir <- "data"
+
+cached_seurat <- sprintf("%s/Yost_alldata_seurat.rds", datadir)
+
+#If we have already processed the data, read in a cached version
+if(file.exists(cached_seurat)){
+  query.object <- readRDS(cached_seurat)
+} else {
+  
+  dir.create(datadir, showWarnings = FALSE)
+  
+  gse <- getGEO(geo_acc)
+  getGEOSuppFiles(geo_acc, baseDir=datadir)
+  
+  #Read in expression matrix
+  exp.mat <- read.delim(sprintf("%s/%s/GSE123813_bcc_scRNA_counts.txt.gz",
+                                datadir, geo_acc), header=T, sep="\t")
+  query.object <- CreateSeuratObject(counts = exp.mat, project = "Yost",
+                                     min.cells = 3, min.features = 10)
+  rm(exp.mat)
+  
+  #and the metadata associated with the GEX data
+  meta <- read.delim(sprintf("%s/%s/GSE123813_bcc_all_metadata.txt.gz",
+                             datadir, geo_acc), header = T, sep = "\t")
+  meta.T <- read.delim(sprintf("%s/%s/GSE123813_bcc_tcell_metadata.txt.gz",
+                               datadir, geo_acc), header = T, sep = "\t")
+  
+  query.object <- AddMetaData(query.object, meta$patient, col.name="patient")
+  
+  rownames(meta) <- meta$cell.id
+
+  meta.T.c <- meta.T$cluster
+  names(meta.T.c) <- meta.T$cell.id
+
+  query.object <- AddMetaData(query.object, meta)
+  query.object <- AddMetaData(query.object, meta.T.c, col.name = "cluster.T")
+  
+  #Read in TCR-seq data
+  tcr.file <- sprintf("%s/%s/GSE123813_bcc_tcr.txt.gz", datadir, geo_acc)
+  tcr.data <- read.csv(tcr.file, sep = "\t")
+  
+  #Check whether there is a alpha-beta pair
+  alpha <- str_count(tcr.data$cdr3s_aa, pattern = "TRA:")
+  beta <- str_count(tcr.data$cdr3s_aa, pattern = "TRB:")
+  
+  tcr.data$has_alphabeta <- ifelse(alpha>0 & beta>0, 1, 0)
+  tcr.data$has_singlepair <- ifelse(alpha==1 & beta==1, 1, 0)
+  
+  query.object <- AddMetaData(query.object, tcr.data)
+  
+  #Make unique IDs for TCRs per patient
+  query.object$cdr3s_pat <- NA
+  inds <- !is.na(query.object$cdr3s_aa)
+  query.object$cdr3s_pat[inds] <- paste0(query.object$cdr3s_aa[inds],
+                                         "_",query.object$patient[inds])
+  
+  #Save object to disk
+  saveRDS(query.object, cached_seurat)
+}
+
+```
+
+
+```{r}
+head(sort(table(query.object$cdr3s_pat), decreasing = T))
+```
+
+
+Subset on pre-treatment samples
+```{r}
+table(query.object$treatment, query.object$patient)
+
+query.pre <- subset(query.object, subset=treatment=="pre")
+```
+
+# ProjecTILs analysis
+
+## Load reference CD8 T map
+
+Here we will project the query data onto a human reference TIL atlas for CD8 T cells, with the goal to interpret T cell diversity in the context of reference T cell subtypes. First, load the reference map:
+```{r}
+download.file("https://figshare.com/ndownloader/files/38921366", destfile = "CD8T_human_ref_v1.rds")
+ref.cd8 <- load.reference.map("CD8T_human_ref_v1.rds")
+```
+
+Let's have a look at the reference CD8 T cell subtypes
+```{r}
+DimPlot(ref.cd8, cols = ref.cd8@misc$atlas.palette, label = T) + theme(aspect.ratio = 1) +
+    ggtitle("CD8 T reference") + NoLegend()
+```
+
+
+Show key marker genes for the reference subtypes
+
+```{r fig.height=4}
+DefaultAssay(ref.cd8) <- "RNA"
+
+genes <- c("SELL", "TCF7", "LEF1", "CCR7", "S1PR1", "LMNA", "IL7R", "GZMK", "FGFBP2",
+    "FCGR3A", "XCL1", "XCL2", "CD200", "CRTAM", "GNG4", "TOX", "PDCD1", "HAVCR2",
+    "GZMB", "PRF1", "LAG3", "KLRB1", "TRAV1-2")
+
+VlnPlot(ref.cd8, features = genes, stack = TRUE, flip = TRUE, fill.by = "ident",
+    cols = ref.cd8@misc$atlas.palette) + NoLegend()
+DefaultAssay(ref.cd8) <- "integrated"
+```
+
+## Reference-based analysis
+
+```{r}
+#Split by patient
+yost.list <- SplitObject(query.pre, split.by = "patient")
+
+ncores = 6
+yost.projected <- Run.ProjecTILs(yost.list, ref.cd8, ncores = ncores)
+```
+
+What is the subtype composition in different patients? Visualize projection and composition for individual patients:
+```{r}
+which.patient <- "su009"
+a <- plot.projection(ref.cd8, query = yost.projected[[which.patient]],
+                     pointsize = 0, linesize = 0.3) + NoLegend() +
+                    ggtitle(which.patient)
+b <- plot.statepred.composition(ref.cd8, query = yost.projected[[which.patient]]) 
+a | b
+```
+
+
+We can verify the expression profile using a panel of marker genes
+
+```{r fig.height=4, fig.width=8}
+genes4radar <- c("CD4", "CD8A", "TCF7", "CCR7", "IL7R", "LMNA", "GZMA", "GZMK", "FGFBP2",
+    "XCL1", "CRTAM", "TOX", "PDCD1", "HAVCR2", "PRF1", "GZMB", "TRAV1-2",
+    "KLRB1")
+
+plot.states.radar(ref.cd8, query = yost.projected$su009, genes4radar = genes4radar)
+```
+
+# Clonotype analysis
+
+
+```{r  fig.width=12, fig.height=8}
+# First, merge data into single object
+yost.merged <- Reduce(merge.Seurat.embeddings, yost.projected)
+```
+
+See largest clonotypes
+```{r fig.width=10, fig.height=2}
+sorted <- sort(table(yost.merged$cdr3s_pat), decreasing = T)
+largest.clones <- head(sorted, 5)
+
+plots <- list()
+for (i in 1:length(largest.clones)) {
+  
+  ctype <- names(largest.clones)[i]
+  
+  cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
+  plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone]) + 
+    ggtitle(sprintf("Clone %i - size %i", i, largest.clones[i]))
+}
+
+wrap_plots(plots, ncol = 5)
+
+```
+
+Summarize clonal sizes
+```{r}
+cutoffs <- c(0, 1, 5, 20, 50)
+names(cutoffs) <- c("Single","<=5","<=20","<=50",">50")
+
+call <- "cdr3s_pat"
+tab <- table(yost.merged[[call]])
+yost.merged$clonesize <- NA
+yost.merged$cloneType <- NA
+
+for (r in 1:nrow(yost.merged[[]])) {
+  e <- yost.merged@meta.data[r,call]
+  if (!is.na(e) & e %in% names(tab)) {
+    yost.merged@meta.data[r,"clonesize"] <- tab[e]
+  }
+}
+
+for (i in seq_along(cutoffs)) {
+  yost.merged$cloneType[yost.merged$clonesize > cutoffs[i]] <- names(cutoffs[i])
+}
+
+yost.merged$Frequency <- yost.merged$clonesize
+
+table(yost.merged$cloneType, yost.merged$clonesize)
+```
+
+
+
+```{r}
+combined <- expression2List(yost.merged, split.by = "functional.cluster")
+Idents(yost.merged) <- "functional.cluster"
+
+clonalDiversity(combined, cloneCall = "cdr3s_pat") +
+  scale_color_manual(values = ref.cd8@misc$atlas.palette)
+
+clonalProportion(combined, cloneCall = "cdr3s_pat", split = c(5, 10, 50, 100, 500, 2000))
+  
+clonalHomeostasis(combined, cloneCall = "cdr3s_pat",
+                  cloneTypes = c(Rare=0.001, Small = 0.005, Medium = 0.01, Large = 0.1, Hyperexpanded= 1))
+
+clonalOverlap(combined, cloneCall = "cdr3s_pat", method = "morisita") + 
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+
+occupiedscRepertoire(yost.merged, x.axis = "functional.cluster")
+```
+
+
