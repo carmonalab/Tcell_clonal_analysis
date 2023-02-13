@@ -165,15 +165,6 @@ ncores = 6
 yost.projected <- Run.ProjecTILs(yost.list, ref.cd8, ncores = ncores)
 ```
 
-What is the subtype composition in different patients? Visualize projection and composition for individual patients:
-```{r}
-which.patient <- "su009"
-a <- plot.projection(ref.cd8, query = yost.projected[[which.patient]],
-                     pointsize = 0, linesize = 0.3) + NoLegend() +
-                    ggtitle(which.patient)
-b <- plot.statepred.composition(ref.cd8, query = yost.projected[[which.patient]]) 
-a | b
-```
 
 
 We can verify the expression profile using a panel of marker genes
@@ -188,28 +179,77 @@ plot.states.radar(ref.cd8, query = yost.projected$su009, genes4radar = genes4rad
 Expression profile match very well those of the reference map
 
 
-# Clonotype analysis
 
+What is the subtype composition in different patients? Visualize projection and composition for individual patients:
+```{r}
+which.patient <- "su009"
+a <- plot.projection(ref.cd8, query = yost.projected[[which.patient]],
+                     pointsize = 0, linesize = 0.3) + NoLegend() +
+                    ggtitle(which.patient)
+b <- plot.statepred.composition(ref.cd8, query = yost.projected[[which.patient]]) 
+a | b
+```
+
+Remove samples with very few cells. A minimum number of cells is required for robust analyses.
+```{r fig.width=6}
+sizes <- as.vector(lapply(yost.projected, ncol))
+
+# At least 100 cells
+keep <- names(sizes)[sizes > 100]
+
+yost.projected <- yost.projected[keep]
+
+plots <- lapply(names(yost.projected), function(x) {
+  plot.statepred.composition(ref.cd8, query = yost.projected[[x]],
+                             metric = "Percent") + ggtitle(x)
+})
+names(plots) <- names(yost.projected)
+
+#sort by fraction of Tex cells
+tex.fraction <- lapply(yost.projected, function(x) {
+  t <- table(x$functional.cluster)
+  unname(t["CD8.TEX"]/sum(t))
+})
+tex.fraction <- unlist(tex.fraction)
+
+plots <- plots[names(sort(tex.fraction, decreasing = T))]
+
+wrap_plots(plots, ncol=4)
+```
+
+Merge data into a single object to enable analyses across patients
 ```{r  fig.width=12, fig.height=8}
 # First, merge data into single object
 yost.merged <- Reduce(merge.Seurat.embeddings, yost.projected)
 Idents(yost.merged) <- "functional.cluster"
 ```
 
-See largest clonotypes
-```{r fig.width=5, fig.height=3}
-sorted <- sort(table(yost.merged$cdr3s_pat), decreasing = T)
-largest.clones <- head(sorted, 6)
+# Clonotype analysis
 
+See largest clonotypes in different patients.
+
+First, calculate frequencies over the total of cells with a TCR chain in the same sample
+```{r fig.width=5, fig.height=3}
+freqs <- lapply(yost.projected, function(x) {
+  table(x$cdr3s_pat) / sum(!is.na(x$cdr3s_pat))
+})
+freqs <- Reduce(c, freqs)
+sorted <- sort(freqs, decreasing = TRUE)
+largest.clones <- head(sorted, 6)
+```
+
+Plot individual clones
+```{r fig.width=5, fig.height=3}
 plots <- list()
 for (i in 1:length(largest.clones)) {
   
   ctype <- names(largest.clones)[i]
+  patient <- gsub("\\S+_","", ctype, perl=T)
   
   cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
   plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
                                 pointsize = 0.3, linesize = 0.3) + 
-    ggtitle(sprintf("Clone %i - size %i", i, largest.clones[i])) + NoLegend()
+    ggtitle(sprintf("%s - Freq %.1f %%", patient, 100*largest.clones[i])) + NoLegend()
 }
 
 wrap_plots(plots, ncol = 3)
@@ -329,11 +369,12 @@ Clonotype bias - find clones with significant enrichment for specific cell subty
 
 ```{r}
 t <- table(yost.merged$patient)
-large.patients <- names(t)[t > 500]
+large.patients <- names(t)[t > 300]
+
 yost.large <- subset(yost.merged, subset = patient %in% large.patients)
 
 clonotypeBias(yost.large, cloneCall = "cdr3s_pat", split.by = "patient",
-              group.by = "functional.cluster", min.expand = 5) +
+              group.by = "functional.cluster", min.expand = 5, n.boots = 20) +
   scale_color_manual(values = ref.cd8@misc$atlas.palette)
 
 biased <- clonotypeBias(yost.large, cloneCall = "cdr3s_pat", split.by = "patient",
@@ -344,18 +385,19 @@ head(most.biased)
 ```
 
 ```{r fig.width=5, fig.height=3}
-biased.clones <- head(most.biased$ncells, 6)
-names(biased.clones) <-  head(most.biased$Clone, 6)
-
 plots <- list()
-for (i in 1:length(biased.clones)) {
+for (i in 1:6) {
   
-  ctype <- names(biased.clones)[i]
-  
+  ctype <- most.biased[i, "Clone"]
+  patient <- most.biased[i, "Sample"]
+  size <- most.biased[i, "ncells"]
+  zscore <- most.biased[i, "Z.score"]
   cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
+  title <- sprintf("Clone %s, size %s, Z=%.1f", i, size, zscore)
+  
   plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
                                 pointsize = 0.3, linesize = 0.3) + 
-    ggtitle(sprintf("Clone %i - size %i", i, biased.clones[i])) + NoLegend()
+    ggtitle(title) + NoLegend()
 }
 
 wrap_plots(plots, ncol = 3)
