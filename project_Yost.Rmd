@@ -22,8 +22,8 @@ renv::restore()
 library(remotes)
 library(BiocManager)
 
-BiocManager::install("scRepertoire")
-remotes::install_github("carmonalab/ProjecTILs")
+#BiocManager::install("scRepertoire")
+#remotes::install_github("carmonalab/ProjecTILs")
 
 library(ggplot2)
 library(Seurat)
@@ -124,7 +124,11 @@ query.pre <- subset(query.object, subset=treatment=="pre")
 
 Here we will project the query data onto a human reference TIL atlas for CD8 T cells, with the goal to interpret T cell diversity in the context of reference T cell subtypes. First, load the reference map:
 ```{r}
-download.file("https://figshare.com/ndownloader/files/38921366", destfile = "CD8T_human_ref_v1.rds")
+ref.file <- "CD8T_human_ref_v1.rds"
+if (!file.exists(ref.file)) {
+  download.file("https://figshare.com/ndownloader/files/38921366", destfile = ref.file)
+}
+
 ref.cd8 <- load.reference.map("CD8T_human_ref_v1.rds")
 ```
 
@@ -137,7 +141,7 @@ DimPlot(ref.cd8, cols = ref.cd8@misc$atlas.palette, label = T) + theme(aspect.ra
 
 Show key marker genes for the reference subtypes
 
-```{r fig.height=4}
+```{r fig.height=4, fig.width=3}
 DefaultAssay(ref.cd8) <- "RNA"
 
 genes <- c("SELL", "TCF7", "LEF1", "CCR7", "S1PR1", "LMNA", "IL7R", "GZMK", "FGFBP2",
@@ -146,6 +150,8 @@ genes <- c("SELL", "TCF7", "LEF1", "CCR7", "S1PR1", "LMNA", "IL7R", "GZMK", "FGF
 
 VlnPlot(ref.cd8, features = genes, stack = TRUE, flip = TRUE, fill.by = "ident",
     cols = ref.cd8@misc$atlas.palette) + NoLegend()
+ggsave("plots/CD8_ref_subset_violins.png", height=12, width=6)
+
 DefaultAssay(ref.cd8) <- "integrated"
 ```
 
@@ -191,7 +197,7 @@ Idents(yost.merged) <- "functional.cluster"
 ```
 
 See largest clonotypes
-```{r fig.width=6, fig.height=4}
+```{r fig.width=5, fig.height=3}
 sorted <- sort(table(yost.merged$cdr3s_pat), decreasing = T)
 largest.clones <- head(sorted, 6)
 
@@ -201,7 +207,8 @@ for (i in 1:length(largest.clones)) {
   ctype <- names(largest.clones)[i]
   
   cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
-  plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone]) + 
+  plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
+                                pointsize = 0.3, linesize = 0.3) + 
     ggtitle(sprintf("Clone %i - size %i", i, largest.clones[i])) + NoLegend()
 }
 
@@ -212,7 +219,7 @@ wrap_plots(plots, ncol = 3)
 Summarize clonal sizes
 ```{r}
 cutoffs <- c(0, 1, 5, 20, 50)
-names(cutoffs) <- c("Single","<=5","<=20","<=50",">50")
+names(cutoffs) <- c("Single (=1)","Small (<=5)","Medium (<=20)","Large (<=50)","Hyper (>50)")
 
 call <- "cdr3s_pat"
 tab <- table(yost.merged[[call]])
@@ -229,6 +236,7 @@ for (r in 1:nrow(yost.merged[[]])) {
 for (i in seq_along(cutoffs)) {
   yost.merged$cloneType[yost.merged$clonesize > cutoffs[i]] <- names(cutoffs[i])
 }
+yost.merged$cloneType <- factor(yost.merged$cloneType, levels= rev(names(cutoffs)))
 
 yost.merged$Frequency <- yost.merged$clonesize
 
@@ -249,14 +257,14 @@ clonalProportion(combined, cloneCall = "cdr3s_pat", split = c(5, 10, 50, 100, 50
 clonalHomeostasis(combined, cloneCall = "cdr3s_pat",
                   cloneTypes = c(Rare=0.001, Small = 0.005, Medium = 0.01, Large = 0.1, Hyperexpanded= 1))
 
-occupiedscRepertoire(yost.merged, x.axis = "functional.cluster")
-
 compareClonotypes(combined, 
                   clonotypes = names(largest.clones),
                   cloneCall="cdr3s_pat", 
                   graph = "alluvial")
+```
 
-
+```{r}
+occupiedscRepertoire(yost.merged, x.axis = "functional.cluster")
 ```
 
 Metrics of clonal overlap (e.g. Morisita index) can be used to assess clonal sharing between subtypes
@@ -284,5 +292,72 @@ clonalNetwork(yost.merged,
               filter.identity = 'CD8.TEX',
               cloneCall = "cdr3s_pat") +
   scale_color_manual(values = ref.cd8@misc$atlas.palette)
+
+```
+
+Subset connectivity using circle graphs
+```{r}
+library(circlize)
+
+circles <- getCirclize(yost.merged,
+                       cloneCall = "cdr3s_pat",
+                       group.by = "functional.cluster")
+
+#Graphing the chord diagram
+circlize::chordDiagram(circles,
+                       self.link = 1, 
+                       grid.col = ref.cd8@misc$atlas.palette)
+
+```
+
+Only on large clones
+```{r}
+large <- subset(yost.merged, subset = clonesize >= 5)
+
+circles <- getCirclize(large,
+                       cloneCall = "cdr3s_pat",
+                       group.by = "functional.cluster")
+
+#Graphing the chord diagram
+circlize::chordDiagram(circles,
+                       self.link = 1, 
+                       grid.col = ref.cd8@misc$atlas.palette)
+
+```
+
+Clonotype bias - find clones with significant enrichment for specific cell subtypes
+
+```{r}
+t <- table(yost.merged$patient)
+large.patients <- names(t)[t > 500]
+yost.large <- subset(yost.merged, subset = patient %in% large.patients)
+
+clonotypeBias(yost.large, cloneCall = "cdr3s_pat", split.by = "patient",
+              group.by = "functional.cluster", min.expand = 5) +
+  scale_color_manual(values = ref.cd8@misc$atlas.palette)
+
+biased <- clonotypeBias(yost.large, cloneCall = "cdr3s_pat", split.by = "patient",
+              group.by = "functional.cluster", min.expand = 5, exportTable = TRUE)
+
+most.biased <- biased[order(biased$Z.score, decreasing = TRUE),]
+head(most.biased)
+```
+
+```{r fig.width=5, fig.height=3}
+biased.clones <- head(most.biased$ncells, 6)
+names(biased.clones) <-  head(most.biased$Clone, 6)
+
+plots <- list()
+for (i in 1:length(biased.clones)) {
+  
+  ctype <- names(biased.clones)[i]
+  
+  cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
+  plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
+                                pointsize = 0.3, linesize = 0.3) + 
+    ggtitle(sprintf("Clone %i - size %i", i, biased.clones[i])) + NoLegend()
+}
+
+wrap_plots(plots, ncol = 3)
 
 ```

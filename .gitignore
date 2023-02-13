@@ -5,4 +5,5 @@
 .Rprofile
 renv/
 data/
+plots/
 *rds
