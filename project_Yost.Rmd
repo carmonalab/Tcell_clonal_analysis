@@ -23,6 +23,7 @@ library(remotes)
 library(BiocManager)
 
 #BiocManager::install("scRepertoire")
+devtools::install_github("ncborcherding/scRepertoire")
 #remotes::install_github("carmonalab/ProjecTILs")
 
 library(ggplot2)
@@ -368,17 +369,12 @@ circlize::chordDiagram(circles,
 Clonotype bias - find clones with significant enrichment for specific cell subtypes
 
 ```{r}
-t <- table(yost.merged$patient)
-large.patients <- names(t)[t > 300]
-
-yost.large <- subset(yost.merged, subset = patient %in% large.patients)
-
-clonotypeBias(yost.large, cloneCall = "cdr3s_pat", split.by = "patient",
-              group.by = "functional.cluster", min.expand = 5, n.boots = 20) +
+clonotypeBias(yost.merged, cloneCall = "cdr3s_pat", split.by = "patient",
+              group.by = "functional.cluster", min.expand = 10, n.boots = 20) +
   scale_color_manual(values = ref.cd8@misc$atlas.palette)
 
 biased <- clonotypeBias(yost.large, cloneCall = "cdr3s_pat", split.by = "patient",
-              group.by = "functional.cluster", min.expand = 5, exportTable = TRUE)
+              group.by = "functional.cluster", min.expand = 10, exportTable = TRUE)
 
 most.biased <- biased[order(biased$Z.score, decreasing = TRUE),]
 head(most.biased)
