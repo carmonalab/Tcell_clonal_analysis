@@ -243,35 +243,6 @@
         "matrixStats"
       ]
     },
-    "ProjecTILs": {
-      "Package": "ProjecTILs",
-      "Version": "3.0.3",
-      "Source": "GitHub",
-      "RemoteType": "github",
-      "RemoteHost": "api.github.com",
-      "RemoteRepo": "ProjecTILs",
-      "RemoteUsername": "carmonalab",
-      "RemoteRef": "HEAD",
-      "RemoteSha": "840cf3ddfb7885928d58652d250ed878db5971cb",
-      "Hash": "aa3b6276e6bac74abfb164fac9816081",
-      "Requirements": [
-        "BiocParallel",
-        "Matrix",
-        "RColorBrewer",
-        "Seurat",
-        "UCell",
-        "ggplot2",
-        "patchwork",
-        "pheatmap",
-        "pracma",
-        "purrr",
-        "reshape2",
-        "scGate",
-        "scales",
-        "umap",
-        "uwot"
-      ]
-    },
     "R.methodsS3": {
       "Package": "R.methodsS3",
       "Version": "1.8.2",
@@ -2289,37 +2260,6 @@
         "ggridges",
         "patchwork",
         "reshape2"
-      ]
-    },
-    "scRepertoire": {
-      "Package": "scRepertoire",
-      "Version": "1.7.0",
-      "Source": "GitHub",
-      "RemoteType": "github",
-      "RemoteHost": "api.github.com",
-      "RemoteRepo": "scRepertoire",
-      "RemoteUsername": "ncborcherding",
-      "RemoteRef": "HEAD",
-      "RemoteSha": "38e248ad02bb864e7cc7c724ab91f5506ccc9143",
-      "Hash": "e60e22bcfcc5b93b297a31606f35621d",
-      "Requirements": [
-        "SeuratObject",
-        "SingleCellExperiment",
-        "SummarizedExperiment",
-        "doParallel",
-        "dplyr",
-        "ggalluvial",
-        "ggplot2",
-        "ggraph",
-        "igraph",
-        "plyr",
-        "powerTCR",
-        "reshape2",
-        "rlang",
-        "stringdist",
-        "stringr",
-        "tidygraph",
-        "vegan"
       ]
     },
     "scales": {

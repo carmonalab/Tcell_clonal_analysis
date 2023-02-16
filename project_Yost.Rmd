@@ -1,5 +1,5 @@
 ---
-title: Reference-based analysis and clonal structure of tumor-specific human T cells
+title: T Cell Clonal Analysis using Single-Cell RNA Sequencing and Reference Maps
 author: "M. Andreatta <massimo.andreatta at unil.ch> and S. Carmona <santiago.carmona at unil.ch>"
 knit: (function(input_file, encoding) {
   out_dir <- 'docs';
@@ -11,20 +11,25 @@ knit: (function(input_file, encoding) {
 
 # Introduction
 
+Here we outline a computational workflow to perform T cell states and clonal analysis from scRNA-seq data based on the R packages Seurat, ProjecTILs and scRepertoire. Given a scRNA-seq T cell dataset with TCR sequence information, cell states are automatically annotated by reference projection using the ProjecTILs method. TCR information is used to track individual clonotypes, assess their clonal expansion, proliferation rates, bias towards specific differentiation states, and the clonal overlap between T cell subtypes.
+
+In this workflow we will analyze a dataset of droplet-based paired scRNA-seq and scTCR-seq (10x Genomics) of tumor-infiltrating T cells from 
+patients with advanced basal cell carcinomas, from the study by [Yost et al](https://www.ncbi.nlm.nih.gov/pubmed/31359002).
+The protocol is adaptable to any single-cell transcriptomics data with TCR sequence information in human and mouse. 
 
 
 # R environment
 
-Install and load all required packages
+Install and load all required packages. 
+
 ```{r, message=FALSE, warning=F, results=FALSE}
 renv::restore()
 
 library(remotes)
 library(BiocManager)
 
-#BiocManager::install("scRepertoire")
-devtools::install_github("ncborcherding/scRepertoire")
-#remotes::install_github("carmonalab/ProjecTILs")
+remotes::install_github("carmonalab/ProjecTILs", ref="923ee1fea93f312f347e7bb984a50fb923697fa8")
+remotes::install_github("ncborcherding/scRepertoire", ref="4441960f5edf2f2451be6aeafa83160b2afe11af")
 
 library(ggplot2)
 library(Seurat)
@@ -34,14 +39,16 @@ library(GEOquery)
 library(stringr)
 library(patchwork)
 
-# Increase timeout time for slow connections
-options(timeout = max(900, getOption("timeout")))
+# Increase timeout limit for slow connections
+options(timeout = max(120, getOption("timeout")))
 ```
 
 
 # Data pre-processing
 
-Download data from GEO
+Download processed counts matrices, TCR and cells metadata from [GEO entry](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE123813).
+Create Seurat object
+
 ```{r}
 geo_acc <- "GSE123813"
 datadir <- "data"
@@ -315,29 +322,8 @@ clonalOverlap(combined, cloneCall = "cdr3s_pat", method = "morisita") +
 
 ```
 
-```{r}
-library(ggraph)
-
-clonalNetwork(yost.merged, 
-              reduction = "umap", 
-              identity = "functional.cluster",
-              filter.clones = 1000,
-              filter.identity = NULL,
-              cloneCall = "cdr3s_pat") +
-  scale_color_manual(values = ref.cd8@misc$atlas.palette)
-
-clonalNetwork(yost.merged, 
-              reduction = "umap", 
-              identity = "functional.cluster",
-              filter.clones = 1000,
-              filter.identity = 'CD8.TEX',
-              cloneCall = "cdr3s_pat") +
-  scale_color_manual(values = ref.cd8@misc$atlas.palette)
-
-```
-
 Subset connectivity using circle graphs
-```{r}
+```{r, fig.width=6}
 library(circlize)
 
 circles <- getCirclize(yost.merged,
@@ -352,7 +338,7 @@ circlize::chordDiagram(circles,
 ```
 
 Only on large clones
-```{r}
+```{r, fig.width=8}
 large <- subset(yost.merged, subset = clonesize >= 5)
 
 circles <- getCirclize(large,
@@ -373,7 +359,7 @@ clonotypeBias(yost.merged, cloneCall = "cdr3s_pat", split.by = "patient",
               group.by = "functional.cluster", min.expand = 10, n.boots = 20) +
   scale_color_manual(values = ref.cd8@misc$atlas.palette)
 
-biased <- clonotypeBias(yost.large, cloneCall = "cdr3s_pat", split.by = "patient",
+biased <- clonotypeBias(large, cloneCall = "cdr3s_pat", split.by = "patient",
               group.by = "functional.cluster", min.expand = 10, exportTable = TRUE)
 
 most.biased <- biased[order(biased$Z.score, decreasing = TRUE),]
