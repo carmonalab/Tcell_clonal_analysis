@@ -11,10 +11,9 @@ knit: (function(input_file, encoding) {
 
 # Introduction
 
-Here we outline a computational workflow to perform T cell states and clonal analysis from scRNA-seq data based on the R packages Seurat, ProjecTILs and scRepertoire. Given a scRNA-seq T cell dataset with TCR sequence information, cell states are automatically annotated by reference projection using the ProjecTILs method. TCR information is used to track individual clonotypes, assess their clonal expansion, proliferation rates, bias towards specific differentiation states, and the clonal overlap between T cell subtypes.
+In this notebook, we outline a computational workflow to perform T cell states and clonal analysis from scRNA-seq data, based on the R packages Seurat, ProjecTILs and scRepertoire. Given a scRNA-seq T cell dataset with TCR sequence information, cell states are automatically annotated by reference projection using the ProjecTILs method. TCR information is used to track individual clonotypes, assess their clonal expansion, proliferation rates, bias towards specific differentiation states, and the clonal overlap between T cell subtypes.
 
-In this workflow we will analyze a dataset of droplet-based paired scRNA-seq and scTCR-seq (10x Genomics) of tumor-infiltrating T cells from 
-patients with advanced basal cell carcinomas, from the study by [Yost et al](https://www.ncbi.nlm.nih.gov/pubmed/31359002).
+In this workflow we will analyze a dataset of droplet-based paired scRNA-seq and scTCR-seq (10x Genomics) of tumor-infiltrating T cells from patients with advanced basal cell carcinoma (BCC), from the study by [Yost et al](https://www.ncbi.nlm.nih.gov/pubmed/31359002).
 The protocol is adaptable to any single-cell transcriptomics data with TCR sequence information in human and mouse. 
 
 
@@ -23,11 +22,14 @@ The protocol is adaptable to any single-cell transcriptomics data with TCR seque
 Install and load all required packages. 
 
 ```{r, message=FALSE, warning=F, results=FALSE}
+if (!require("renv")) install.packages("renv")
+library(renv)
 renv::restore()
 
 library(remotes)
 library(BiocManager)
 
+#Specify versions for reproducibility
 remotes::install_github("carmonalab/ProjecTILs", ref="923ee1fea93f312f347e7bb984a50fb923697fa8")
 remotes::install_github("ncborcherding/scRepertoire", ref="4441960f5edf2f2451be6aeafa83160b2afe11af")
 
@@ -192,7 +194,7 @@ What is the subtype composition in different patients? Visualize projection and 
 ```{r}
 which.patient <- "su009"
 a <- plot.projection(ref.cd8, query = yost.projected[[which.patient]],
-                     pointsize = 0, linesize = 0.3) + NoLegend() +
+                     pointsize = 0.3, linesize = 0.3) + NoLegend() +
                     ggtitle(which.patient)
 b <- plot.statepred.composition(ref.cd8, query = yost.projected[[which.patient]]) 
 a | b
@@ -230,13 +232,12 @@ Merge data into a single object to enable analyses across patients
 # First, merge data into single object
 yost.merged <- Reduce(merge.Seurat.embeddings, yost.projected)
 Idents(yost.merged) <- "functional.cluster"
+DefaultAssay(yost.merged) <- "RNA"
 ```
 
 # Clonotype analysis
 
-See largest clonotypes in different patients.
-
-First, calculate frequencies over the total of cells with a TCR chain in the same sample
+First, calculate frequencies over the total of cells with a TCR chain in the same sample:
 ```{r fig.width=5, fig.height=3}
 freqs <- lapply(yost.projected, function(x) {
   table(x$cdr3s_pat) / sum(!is.na(x$cdr3s_pat))
@@ -246,7 +247,7 @@ sorted <- sort(freqs, decreasing = TRUE)
 largest.clones <- head(sorted, 6)
 ```
 
-Plot individual clones
+Plot individual clones in the reference space:
 ```{r fig.width=5, fig.height=3}
 plots <- list()
 for (i in 1:length(largest.clones)) {
@@ -256,7 +257,7 @@ for (i in 1:length(largest.clones)) {
   
   cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
   plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
-                                pointsize = 0.3, linesize = 0.3) + 
+                                pointsize = 2, linesize = 0.3) + 
     ggtitle(sprintf("%s - Freq %.1f %%", patient, 100*largest.clones[i])) + NoLegend()
 }
 
@@ -264,7 +265,9 @@ wrap_plots(plots, ncol = 3)
 
 ```
 
-Summarize clonal sizes
+## Clonal expansion
+
+Summarize clonal sizes:
 ```{r}
 cutoffs <- c(0, 1, 5, 20, 50)
 names(cutoffs) <- c("Single (=1)","Small (<=5)","Medium (<=20)","Large (<=50)","Hyper (>50)")
@@ -292,8 +295,7 @@ yost.merged$Frequency <- yost.merged$clonesize
 ```
 
 
-See clonal composition and clonal diversity per cell subtype
-
+See clonal composition and clonal diversity per cell subtype:
 ```{r}
 combined <- expression2List(yost.merged, split.by = "functional.cluster")
 
@@ -311,18 +313,73 @@ compareClonotypes(combined,
                   graph = "alluvial")
 ```
 
+A useful visualization is the occupied single-cell repertoire. It measures the number of cells, and their clonal expansion type, for each of the cell subtypes:
 ```{r}
 occupiedscRepertoire(yost.merged, x.axis = "functional.cluster")
 ```
 
-Metrics of clonal overlap (e.g. Morisita index) can be used to assess clonal sharing between subtypes
+## Clonal proliferation
+
+Identify most proliferating clones based on cell cycling signatures. If ProjecTILs was run with `filter.cells=TRUE` (which is the default), cell cycling scores are already pre-calculated and available as metadata:
+
+```{r}
+#Identify cycling cells
+yost.merged$is.cycling <- ifelse((yost.merged$cycling.score.G1_S > 0.1 |
+                                 yost.merged$cycling.score.G2_M > 0.1),
+                                 yes = "Proliferating",
+                                 no = "Resting")
+
+clonotypes <- table(yost.merged$cdr3s_pat)
+expanded <- names(clonotypes)[clonotypes>=2]
+
+prolif.freq <- sapply(expanded, function(x) {
+  sub <- subset(yost.merged[[]], subset=cdr3s_pat == x)
+  sum(sub$is.cycling == "Proliferating") / ncol(sub)
+})
+
+sorted <- sort(prolif.freq, decreasing = T)
+frequency.proliferating <- head(sorted, 6)
+```
+
+
+See frequency of top 6 clones
+```{r fig.height=1.5, fig.width=4}
+df <- data.frame(frequency.proliferating)
+df$clone <- rownames(df)
+ggplot(df, aes(x=reorder(clone, frequency.proliferating), y=frequency.proliferating)) +
+  geom_bar(stat="identity", fill="black") + coord_flip() +
+  theme_light()
+
+```
+
+See them on the reference space
+```{r fig.width=5, fig.height=3}
+plots <- list()
+for (ctype in names(frequency.proliferating)) {
+  
+  freq <- frequency.proliferating[ctype]
+  title <- sprintf("%.0f %% proliferating", 100*freq)
+  cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
+  
+  plots[[ctype]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
+                                pointsize = 2, linesize = 0.3) + 
+    ggtitle(title) + NoLegend()
+}
+
+wrap_plots(plots, ncol = 3)
+
+```
+
+## Clonal sharing
+
+Metrics of clonal overlap (e.g. Morisita index) can be used to assess clonal sharing between subtypes:
 ```{r}
 clonalOverlap(combined, cloneCall = "cdr3s_pat", method = "morisita") + 
       theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
 
 ```
 
-Subset connectivity using circle graphs
+Subset connectivity using circos plots
 ```{r, fig.width=6}
 library(circlize)
 
@@ -337,7 +394,7 @@ circlize::chordDiagram(circles,
 
 ```
 
-Only on large clones
+Only for large clones (e.g. with 5 cells or more):
 ```{r, fig.width=8}
 large <- subset(yost.merged, subset = clonesize >= 5)
 
@@ -352,8 +409,9 @@ circlize::chordDiagram(circles,
 
 ```
 
-Clonotype bias - find clones with significant enrichment for specific cell subtypes
+## Clonotype bias
 
+Find clones with significant enrichment for specific cell subtypes:
 ```{r}
 clonotypeBias(yost.merged, cloneCall = "cdr3s_pat", split.by = "patient",
               group.by = "functional.cluster", min.expand = 10, n.boots = 20) +
@@ -366,6 +424,7 @@ most.biased <- biased[order(biased$Z.score, decreasing = TRUE),]
 head(most.biased)
 ```
 
+See where the most "biased" clonotypes are found on the reference.
 ```{r fig.width=5, fig.height=3}
 plots <- list()
 for (i in 1:6) {
@@ -378,7 +437,7 @@ for (i in 1:6) {
   title <- sprintf("Clone %s, size %s, Z=%.1f", i, size, zscore)
   
   plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
-                                pointsize = 0.3, linesize = 0.3) + 
+                                pointsize = 2, linesize = 0.3) + 
     ggtitle(title) + NoLegend()
 }
 
