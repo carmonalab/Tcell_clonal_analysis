@@ -167,6 +167,7 @@ DefaultAssay(ref.cd8) <- "integrated"
 
 ## Reference-based analysis
 
+Split object by patient and project them separately into the reference map
 ```{r}
 #Split by patient
 yost.list <- SplitObject(query.pre, split.by = "patient")
@@ -177,8 +178,7 @@ yost.projected <- Run.ProjecTILs(yost.list, ref.cd8, ncores = ncores)
 
 
 
-We can verify the expression profile using a panel of marker genes
-
+We can verify the expression profile using a panel of marker genes:
 ```{r fig.height=4, fig.width=8}
 genes4radar <- c("CD4", "CD8A", "TCF7", "CCR7", "IL7R", "LMNA", "GZMA", "GZMK", "FGFBP2",
     "XCL1", "CRTAM", "TOX", "PDCD1", "HAVCR2", "PRF1", "GZMB", "TRAV1-2",
@@ -318,7 +318,7 @@ A useful visualization is the occupied single-cell repertoire. It measures the n
 occupiedscRepertoire(yost.merged, x.axis = "functional.cluster")
 ```
 
-## Clonal proliferation
+## Clonotype proliferation rate
 
 Identify most proliferating clones based on cell cycling signatures. If ProjecTILs was run with `filter.cells=TRUE` (which is the default), cell cycling scores are already pre-calculated and available as metadata:
 
