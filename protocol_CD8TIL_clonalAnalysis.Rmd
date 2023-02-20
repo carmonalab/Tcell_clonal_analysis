@@ -30,8 +30,8 @@ library(remotes)
 library(BiocManager)
 
 #Specify versions for reproducibility
-remotes::install_github("carmonalab/ProjecTILs", ref="923ee1fea93f312f347e7bb984a50fb923697fa8")
-remotes::install_github("ncborcherding/scRepertoire", ref="4441960f5edf2f2451be6aeafa83160b2afe11af")
+#remotes::install_github("carmonalab/ProjecTILs", ref="7de06ad")
+#remotes::install_github("ncborcherding/scRepertoire", ref="4441960")
 
 library(ggplot2)
 library(Seurat)
@@ -59,10 +59,11 @@ cached_seurat <- sprintf("%s/Yost_alldata_seurat.rds", datadir)
 
 #If we have already processed the data, read in a cached version
 if(file.exists(cached_seurat)){
-  query.object <- readRDS(cached_seurat)
+  seurat <- readRDS(cached_seurat)
 } else {
   
   dir.create(datadir, showWarnings = FALSE)
+  dir.create("plots", showWarnings = FALSE)
   
   gse <- getGEO(geo_acc)
   getGEOSuppFiles(geo_acc, baseDir=datadir)
@@ -70,7 +71,7 @@ if(file.exists(cached_seurat)){
   #Read in expression matrix
   exp.mat <- read.delim(sprintf("%s/%s/GSE123813_bcc_scRNA_counts.txt.gz",
                                 datadir, geo_acc), header=T, sep="\t")
-  query.object <- CreateSeuratObject(counts = exp.mat, project = "Yost",
+  seurat <- CreateSeuratObject(counts = exp.mat, project = "Yost",
                                      min.cells = 3, min.features = 10)
   rm(exp.mat)
   
@@ -80,15 +81,15 @@ if(file.exists(cached_seurat)){
   meta.T <- read.delim(sprintf("%s/%s/GSE123813_bcc_tcell_metadata.txt.gz",
                                datadir, geo_acc), header = T, sep = "\t")
   
-  query.object <- AddMetaData(query.object, meta$patient, col.name="patient")
+  seurat <- AddMetaData(seurat, meta$patient, col.name="patient")
   
   rownames(meta) <- meta$cell.id
 
   meta.T.c <- meta.T$cluster
   names(meta.T.c) <- meta.T$cell.id
 
-  query.object <- AddMetaData(query.object, meta)
-  query.object <- AddMetaData(query.object, meta.T.c, col.name = "cluster.T")
+  seurat <- AddMetaData(seurat, meta)
+  seurat <- AddMetaData(seurat, meta.T.c, col.name = "cluster.T")
   
   #Read in TCR-seq data
   tcr.file <- sprintf("%s/%s/GSE123813_bcc_tcr.txt.gz", datadir, geo_acc)
@@ -101,31 +102,31 @@ if(file.exists(cached_seurat)){
   tcr.data$has_alphabeta <- ifelse(alpha>0 & beta>0, 1, 0)
   tcr.data$has_singlepair <- ifelse(alpha==1 & beta==1, 1, 0)
   
-  query.object <- AddMetaData(query.object, tcr.data)
+  seurat <- AddMetaData(seurat, tcr.data)
   
   #Make unique IDs for TCRs per patient
-  query.object$cdr3s_pat <- NA
-  inds <- !is.na(query.object$cdr3s_aa)
-  query.object$cdr3s_pat[inds] <- paste0(query.object$cdr3s_aa[inds],
-                                         "_",query.object$patient[inds])
+  seurat$cdr3s_pat <- NA
+  inds <- !is.na(seurat$cdr3s_aa)
+  seurat$cdr3s_pat[inds] <- paste0(seurat$cdr3s_aa[inds],
+                                         "_",seurat$patient[inds])
   
   #Save object to disk
-  saveRDS(query.object, cached_seurat)
+  saveRDS(seurat, cached_seurat)
 }
 
 ```
 
 
 ```{r}
-head(sort(table(query.object$cdr3s_pat), decreasing = T))
+head(sort(table(seurat$cdr3s_pat), decreasing = T))
 ```
 
 
 Subset on pre-treatment samples
 ```{r}
-table(query.object$treatment, query.object$patient)
+table(seurat$treatment, seurat$patient)
 
-query.pre <- subset(query.object, subset=treatment=="pre")
+seurat.pre <- subset(seurat, subset=treatment=="pre")
 ```
 
 # ProjecTILs analysis
@@ -144,8 +145,10 @@ ref.cd8 <- load.reference.map("CD8T_human_ref_v1.rds")
 
 Let's have a look at the reference CD8 T cell subtypes
 ```{r}
-DimPlot(ref.cd8, cols = ref.cd8@misc$atlas.palette, label = T) + theme(aspect.ratio = 1) +
-    ggtitle("CD8 T reference") + NoLegend()
+DimPlot(ref.cd8, cols = ref.cd8@misc$atlas.palette, label = T, raster = T) +
+  theme(aspect.ratio = 1) + ggtitle("CD8 T reference") + NoLegend()
+
+ggsave("plots/CD8T_reference_umap.pdf", height = 4, width=5)
 ```
 
 
@@ -160,7 +163,8 @@ genes <- c("SELL", "TCF7", "LEF1", "CCR7", "S1PR1", "LMNA", "IL7R", "GZMK", "FGF
 
 VlnPlot(ref.cd8, features = genes, stack = TRUE, flip = TRUE, fill.by = "ident",
     cols = ref.cd8@misc$atlas.palette) + NoLegend()
-ggsave("plots/CD8_ref_subset_violins.png", height=12, width=6)
+
+ggsave("plots/CD8T_ref_subset_violins.pdf", height=12, width=6)
 
 DefaultAssay(ref.cd8) <- "integrated"
 ```
@@ -170,10 +174,10 @@ DefaultAssay(ref.cd8) <- "integrated"
 Split object by patient and project them separately into the reference map
 ```{r}
 #Split by patient
-yost.list <- SplitObject(query.pre, split.by = "patient")
+seurat.list <- SplitObject(seurat.pre, split.by = "patient")
 
 ncores = 6
-yost.projected <- Run.ProjecTILs(yost.list, ref.cd8, ncores = ncores)
+seurat.projected <- Run.ProjecTILs(seurat.list, ref.cd8, ncores = ncores)
 ```
 
 
@@ -184,7 +188,9 @@ genes4radar <- c("CD4", "CD8A", "TCF7", "CCR7", "IL7R", "LMNA", "GZMA", "GZMK", 
     "XCL1", "CRTAM", "TOX", "PDCD1", "HAVCR2", "PRF1", "GZMB", "TRAV1-2",
     "KLRB1")
 
-plot.states.radar(ref.cd8, query = yost.projected$su009, genes4radar = genes4radar)
+plot.states.radar(ref.cd8, query = seurat.projected$su009, genes4radar = genes4radar)
+ggsave("plots/radars_projected.pdf", height=11, width=16)
+
 ```
 Expression profile match very well those of the reference map
 
@@ -193,30 +199,32 @@ Expression profile match very well those of the reference map
 What is the subtype composition in different patients? Visualize projection and composition for individual patients:
 ```{r}
 which.patient <- "su009"
-a <- plot.projection(ref.cd8, query = yost.projected[[which.patient]],
-                     pointsize = 0.3, linesize = 0.3) + NoLegend() +
+a <- plot.projection(ref.cd8, query = seurat.projected[[which.patient]],
+                     pointsize = 0.1, linesize = 0.3, raster=T) + NoLegend() +
                     ggtitle(which.patient)
-b <- plot.statepred.composition(ref.cd8, query = yost.projected[[which.patient]]) 
+b <- plot.statepred.composition(ref.cd8, query = seurat.projected[[which.patient]]) 
 a | b
+
+ggsave("plots/single_patient_composition.pdf", height=4, width=8)
 ```
 
 Remove samples with very few cells. A minimum number of cells is required for robust analyses.
 ```{r fig.width=6}
-sizes <- as.vector(lapply(yost.projected, ncol))
+sizes <- as.vector(lapply(seurat.projected, ncol))
 
 # At least 100 cells
 keep <- names(sizes)[sizes > 100]
 
-yost.projected <- yost.projected[keep]
+seurat.projected <- seurat.projected[keep]
 
-plots <- lapply(names(yost.projected), function(x) {
-  plot.statepred.composition(ref.cd8, query = yost.projected[[x]],
+plots <- lapply(names(seurat.projected), function(x) {
+  plot.statepred.composition(ref.cd8, query = seurat.projected[[x]],
                              metric = "Percent") + ggtitle(x)
 })
-names(plots) <- names(yost.projected)
+names(plots) <- names(seurat.projected)
 
 #sort by fraction of Tex cells
-tex.fraction <- lapply(yost.projected, function(x) {
+tex.fraction <- lapply(seurat.projected, function(x) {
   t <- table(x$functional.cluster)
   unname(t["CD8.TEX"]/sum(t))
 })
@@ -225,21 +233,23 @@ tex.fraction <- unlist(tex.fraction)
 plots <- plots[names(sort(tex.fraction, decreasing = T))]
 
 wrap_plots(plots, ncol=4)
+
+ggsave("plots/all_patient_composition.pdf", height=6, width=14)
 ```
 
 Merge data into a single object to enable analyses across patients
 ```{r  fig.width=12, fig.height=8}
 # First, merge data into single object
-yost.merged <- Reduce(merge.Seurat.embeddings, yost.projected)
-Idents(yost.merged) <- "functional.cluster"
-DefaultAssay(yost.merged) <- "RNA"
+merged.projected <- Reduce(merge.Seurat.embeddings, seurat.projected)
+Idents(merged.projected) <- "functional.cluster"
+DefaultAssay(merged.projected) <- "RNA"
 ```
 
 # Clonotype analysis
 
 First, calculate frequencies over the total of cells with a TCR chain in the same sample:
 ```{r fig.width=5, fig.height=3}
-freqs <- lapply(yost.projected, function(x) {
+freqs <- lapply(seurat.projected, function(x) {
   table(x$cdr3s_pat) / sum(!is.na(x$cdr3s_pat))
 })
 freqs <- Reduce(c, freqs)
@@ -255,14 +265,14 @@ for (i in 1:length(largest.clones)) {
   ctype <- names(largest.clones)[i]
   patient <- gsub("\\S+_","", ctype, perl=T)
   
-  cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
-  plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
-                                pointsize = 2, linesize = 0.3) + 
+  cells.in.clone <- which(merged.projected[["cdr3s_pat"]]==ctype)
+  plots[[i]] <- plot.projection(ref.cd8, merged.projected[,cells.in.clone],
+                                pointsize = 1, linesize = 0.3, raster=T) + 
     ggtitle(sprintf("%s - Freq %.1f %%", patient, 100*largest.clones[i])) + NoLegend()
 }
 
 wrap_plots(plots, ncol = 3)
-
+ggsave("plots/largest_clones_umap.pdf", height=7, width=12)
 ```
 
 ## Clonal expansion
@@ -273,31 +283,31 @@ cutoffs <- c(0, 1, 5, 20, 50)
 names(cutoffs) <- c("Single (=1)","Small (<=5)","Medium (<=20)","Large (<=50)","Hyper (>50)")
 
 call <- "cdr3s_pat"
-tab <- table(yost.merged[[call]])
-yost.merged$clonesize <- NA
-yost.merged$cloneType <- NA
+tab <- table(merged.projected[[call]])
+merged.projected$clonesize <- NA
+merged.projected$cloneType <- NA
 
-for (r in 1:nrow(yost.merged[[]])) {
-  e <- yost.merged@meta.data[r,call]
+for (r in 1:nrow(merged.projected[[]])) {
+  e <- merged.projected@meta.data[r,call]
   if (!is.na(e) & e %in% names(tab)) {
-    yost.merged@meta.data[r,"clonesize"] <- tab[e]
+    merged.projected@meta.data[r,"clonesize"] <- tab[e]
   }
 }
 
 for (i in seq_along(cutoffs)) {
-  yost.merged$cloneType[yost.merged$clonesize > cutoffs[i]] <- names(cutoffs[i])
+  merged.projected$cloneType[merged.projected$clonesize > cutoffs[i]] <- names(cutoffs[i])
 }
-yost.merged$cloneType <- factor(yost.merged$cloneType, levels= rev(names(cutoffs)))
+merged.projected$cloneType <- factor(merged.projected$cloneType, levels= rev(names(cutoffs)))
 
-yost.merged$Frequency <- yost.merged$clonesize
+merged.projected$Frequency <- merged.projected$clonesize
 
-#table(yost.merged$cloneType, yost.merged$clonesize)
+#table(merged.projected$cloneType, merged.projected$clonesize)
 ```
 
 
 See clonal composition and clonal diversity per cell subtype:
 ```{r}
-combined <- expression2List(yost.merged, split.by = "functional.cluster")
+combined <- expression2List(merged.projected, split.by = "functional.cluster")
 
 clonalDiversity(combined, cloneCall = "cdr3s_pat") +
   scale_color_manual(values = ref.cd8@misc$atlas.palette)
@@ -315,7 +325,10 @@ compareClonotypes(combined,
 
 A useful visualization is the occupied single-cell repertoire. It measures the number of cells, and their clonal expansion type, for each of the cell subtypes:
 ```{r}
-occupiedscRepertoire(yost.merged, x.axis = "functional.cluster")
+occupiedscRepertoire(merged.projected, x.axis = "functional.cluster") + 
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggsave("plots/occupiedRep_barplot.pdf", height=5, width=6)  
 ```
 
 ## Clonotype proliferation rate
@@ -324,16 +337,16 @@ Identify most proliferating clones based on cell cycling signatures. If ProjecTI
 
 ```{r}
 #Identify cycling cells
-yost.merged$is.cycling <- ifelse((yost.merged$cycling.score.G1_S > 0.1 |
-                                 yost.merged$cycling.score.G2_M > 0.1),
+merged.projected$is.cycling <- ifelse((merged.projected$cycling.score.G1_S > 0.1 |
+                                 merged.projected$cycling.score.G2_M > 0.1),
                                  yes = "Proliferating",
                                  no = "Resting")
 
-clonotypes <- table(yost.merged$cdr3s_pat)
+clonotypes <- table(merged.projected$cdr3s_pat)
 expanded <- names(clonotypes)[clonotypes>=2]
 
 prolif.freq <- sapply(expanded, function(x) {
-  sub <- subset(yost.merged[[]], subset=cdr3s_pat == x)
+  sub <- subset(merged.projected[[]], subset=cdr3s_pat == x)
   sum(sub$is.cycling == "Proliferating") / ncol(sub)
 })
 
@@ -349,7 +362,7 @@ df$clone <- rownames(df)
 ggplot(df, aes(x=reorder(clone, frequency.proliferating), y=frequency.proliferating)) +
   geom_bar(stat="identity", fill="black") + coord_flip() +
   theme_light()
-
+ggsave("plots/most_prolif_clones_barplot.pdf", height=3, width=10)
 ```
 
 See them on the reference space
@@ -359,15 +372,15 @@ for (ctype in names(frequency.proliferating)) {
   
   freq <- frequency.proliferating[ctype]
   title <- sprintf("%.0f %% proliferating", 100*freq)
-  cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
+  cells.in.clone <- which(merged.projected[["cdr3s_pat"]]==ctype)
   
-  plots[[ctype]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
-                                pointsize = 2, linesize = 0.3) + 
+  plots[[ctype]] <- plot.projection(ref.cd8, merged.projected[,cells.in.clone],
+                                pointsize = 1, linesize = 0.3, raster=T) + 
     ggtitle(title) + NoLegend()
 }
 
 wrap_plots(plots, ncol = 3)
-
+ggsave("plots/most_prolif_clones_umap.pdf", height=7, width=12)
 ```
 
 ## Clonal sharing
@@ -376,27 +389,28 @@ Metrics of clonal overlap (e.g. Morisita index) can be used to assess clonal sha
 ```{r}
 clonalOverlap(combined, cloneCall = "cdr3s_pat", method = "morisita") + 
       theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
-
+ggsave("plots/morisita_heatmap.pdf", height=4, width=6)
 ```
 
 Subset connectivity using circos plots
 ```{r, fig.width=6}
 library(circlize)
 
-circles <- getCirclize(yost.merged,
+circles <- getCirclize(merged.projected,
                        cloneCall = "cdr3s_pat",
                        group.by = "functional.cluster")
 
 #Graphing the chord diagram
+pdf("plots/circos_subtype.pdf", width = 5, height = 5)
 circlize::chordDiagram(circles,
                        self.link = 1, 
                        grid.col = ref.cd8@misc$atlas.palette)
-
+dev.off()
 ```
 
 Only for large clones (e.g. with 5 cells or more):
 ```{r, fig.width=8}
-large <- subset(yost.merged, subset = clonesize >= 5)
+large <- subset(merged.projected, subset = clonesize >= 5)
 
 circles <- getCirclize(large,
                        cloneCall = "cdr3s_pat",
@@ -413,9 +427,11 @@ circlize::chordDiagram(circles,
 
 Find clones with significant enrichment for specific cell subtypes:
 ```{r}
-clonotypeBias(yost.merged, cloneCall = "cdr3s_pat", split.by = "patient",
+clonotypeBias(merged.projected, cloneCall = "cdr3s_pat", split.by = "patient",
               group.by = "functional.cluster", min.expand = 10, n.boots = 20) +
   scale_color_manual(values = ref.cd8@misc$atlas.palette)
+
+ggsave("plots/clonotype_bias.pdf", height=3, width=5)
 
 biased <- clonotypeBias(large, cloneCall = "cdr3s_pat", split.by = "patient",
               group.by = "functional.cluster", min.expand = 10, exportTable = TRUE)
@@ -433,14 +449,15 @@ for (i in 1:6) {
   patient <- most.biased[i, "Sample"]
   size <- most.biased[i, "ncells"]
   zscore <- most.biased[i, "Z.score"]
-  cells.in.clone <- which(yost.merged[["cdr3s_pat"]]==ctype)
+  cells.in.clone <- which(merged.projected[["cdr3s_pat"]]==ctype)
   title <- sprintf("Clone %s, size %s, Z=%.1f", i, size, zscore)
   
-  plots[[i]] <- plot.projection(ref.cd8, yost.merged[,cells.in.clone],
-                                pointsize = 2, linesize = 0.3) + 
+  plots[[i]] <- plot.projection(ref.cd8, merged.projected[,cells.in.clone],
+                                pointsize = 1, linesize = 0.3, raster=T) + 
     ggtitle(title) + NoLegend()
 }
 
 wrap_plots(plots, ncol = 3)
 
+ggsave("plots/biased_clones_umap.pdf", height=7, width=12)
 ```
