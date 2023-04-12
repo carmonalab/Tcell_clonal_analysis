@@ -42,7 +42,7 @@ library(stringr)
 library(patchwork)
 
 # Increase timeout limit for slow connections
-options(timeout = max(120, getOption("timeout")))
+options(timeout = max(900, getOption("timeout")))
 ```
 
 
@@ -154,7 +154,7 @@ ggsave("plots/CD8T_reference_umap.pdf", height = 4, width=5)
 
 Show key marker genes for the reference subtypes
 
-```{r fig.height=4, fig.width=3}
+```{r fig.height=7, fig.width=4}
 DefaultAssay(ref.cd8) <- "RNA"
 
 genes <- c("SELL", "TCF7", "LEF1", "CCR7", "S1PR1", "LMNA", "IL7R", "GZMK", "FGFBP2",
@@ -183,7 +183,7 @@ seurat.projected <- Run.ProjecTILs(seurat.list, ref.cd8, ncores = ncores)
 
 
 We can verify the expression profile using a panel of marker genes:
-```{r fig.height=4, fig.width=8}
+```{r fig.height=8, fig.width=14}
 genes4radar <- c("CD4", "CD8A", "TCF7", "CCR7", "IL7R", "LMNA", "GZMA", "GZMK", "FGFBP2",
     "XCL1", "CRTAM", "TOX", "PDCD1", "HAVCR2", "PRF1", "GZMB", "TRAV1-2",
     "KLRB1")
@@ -209,7 +209,7 @@ ggsave("plots/single_patient_composition.pdf", height=4, width=8)
 ```
 
 Remove samples with very few cells. A minimum number of cells is required for robust analyses.
-```{r fig.width=6}
+```{r fig.height=7, fig.width=14}
 sizes <- as.vector(lapply(seurat.projected, ncol))
 
 # At least 100 cells
@@ -258,7 +258,7 @@ largest.clones <- head(sorted, 6)
 ```
 
 Plot individual clones in the reference space:
-```{r fig.width=5, fig.height=3}
+```{r fig.width=10, fig.height=6}
 plots <- list()
 for (i in 1:length(largest.clones)) {
   
@@ -356,7 +356,7 @@ frequency.proliferating <- head(sorted, 6)
 
 
 See frequency of top 6 clones
-```{r fig.height=1.5, fig.width=4}
+```{r fig.height=3, fig.width=8}
 df <- data.frame(frequency.proliferating)
 df$clone <- rownames(df)
 ggplot(df, aes(x=reorder(clone, frequency.proliferating), y=frequency.proliferating)) +
@@ -366,7 +366,7 @@ ggsave("plots/most_prolif_clones_barplot.pdf", height=3, width=10)
 ```
 
 See them on the reference space
-```{r fig.width=5, fig.height=3}
+```{r fig.width=10, fig.height=6}
 plots <- list()
 for (ctype in names(frequency.proliferating)) {
   
@@ -441,7 +441,7 @@ head(most.biased)
 ```
 
 See where the most "biased" clonotypes are found on the reference.
-```{r fig.width=5, fig.height=3}
+```{r fig.width=10, fig.height=6}
 plots <- list()
 for (i in 1:6) {
   
